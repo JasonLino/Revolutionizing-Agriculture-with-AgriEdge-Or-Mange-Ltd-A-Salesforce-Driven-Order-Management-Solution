@@ -119,5 +119,7 @@ This project demonstrates practical knowledge in:
 ---
 
 **Project by:** Jason Lino
+---
 **Platform:** Salesforce Developer Edition
+---
 **Course:** Salesforce Capstone Project — Revolutionizing Agriculture with AgriEdge Or-Mange Ltd
