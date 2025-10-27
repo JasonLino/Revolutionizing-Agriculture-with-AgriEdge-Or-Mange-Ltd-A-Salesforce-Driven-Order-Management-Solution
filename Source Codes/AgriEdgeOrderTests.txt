@@ -1,0 +1,183 @@
+@isTest
+public class AgriEdgeOrderTests {
+
+    @isTest
+    public static void testOrderTaskCreator() {
+        Account testAccount = new Account(Name = 'Test Customer');
+        insert testAccount;
+
+        User testUser = new User(
+            Username = 'testuser@example3454.com',
+            Firstname = 'Test1',
+            LastName = 'john',
+            Email = 'testuser@example.com',
+            Alias = 'testuser',
+            ProfileId = [SELECT Id FROM Profile WHERE Name = 'Platform 1' LIMIT 1].Id,
+            TimeZoneSidKey = 'America/New_York',
+            LocaleSidKey = 'en_US',
+            EmailEncodingKey = 'ISO-8859-1',
+            LanguageLocaleKey = 'en_US'
+        );
+        insert testUser;
+
+        AgriEdge_Order__c order = new AgriEdge_Order__c(
+            Payment_Status__c = 'Paid',
+            Order_Status__c = 'Processing',
+            Customer__c = testAccount.Id
+        );
+        insert order;
+
+        Test.startTest();
+        OrderTaskCreator.createTaskForNewOrder(new List<Id>{order.Id});
+        Test.stopTest();
+
+        List<Task> tasks = [SELECT Id, WhatId FROM Task WHERE WhatId = :order.Id];
+        System.assertEquals(2, tasks.size(), 'Two tasks should be created.');
+        System.assertEquals(order.Id, tasks[0].WhatId, 'The task should be linked to the correct order.');
+    }
+
+    @isTest
+    public static void testOrderStatusUpdater() {
+        AgriEdge_Order__c order1 = new AgriEdge_Order__c(Order_Status__c = 'New', Payment_Status__c = 'Pending');
+        insert order1;
+
+        AgriEdge_Order__c order2 = new AgriEdge_Order__c(Order_Status__c = 'Processing', Payment_Status__c = 'Pending');
+        insert order2;
+
+        AgriEdge_Order__c order3 = new AgriEdge_Order__c(Order_Status__c = 'Canceled', Payment_Status__c = 'Failed');
+        insert order3;
+
+        Set<Id> orderIds = new Set<Id>{order1.Id, order2.Id, order3.Id};
+
+        Test.startTest();
+        OrderStatusUpdater.updateOrderStatus(orderIds);
+        Test.stopTest();
+
+        AgriEdge_Order__c updatedOrder1 = [SELECT Order_Status__c FROM AgriEdge_Order__c WHERE Id = :order1.Id];
+        System.assertEquals('Processing', updatedOrder1.Order_Status__c);
+
+        AgriEdge_Order__c updatedOrder2 = [SELECT Order_Status__c FROM AgriEdge_Order__c WHERE Id = :order2.Id];
+        System.assertEquals('Processing', updatedOrder2.Order_Status__c);
+
+        AgriEdge_Order__c updatedOrder3 = [SELECT Order_Status__c FROM AgriEdge_Order__c WHERE Id = :order3.Id];
+        System.assertEquals('Canceled', updatedOrder3.Order_Status__c);
+    }
+
+    @isTest
+    public static void testOrderTotalUpdater() {
+        AgriEdge_Order__c order1 = new AgriEdge_Order__c(Order_Status__c = 'New', Payment_Status__c = 'Pending');
+        insert order1;
+
+        AgriEdge_OrderItem__c orderItem1 = new AgriEdge_OrderItem__c(
+            Order__c = order1.Id,
+            Quantity__c = 2,
+            Unit_Price__c = 25.0
+        );
+        AgriEdge_OrderItem__c orderItem2 = new AgriEdge_OrderItem__c(
+            Order__c = order1.Id,
+            Quantity__c = 1,
+            Unit_Price__c = 30.0
+        );
+        insert new List<AgriEdge_OrderItem__c>{orderItem1, orderItem2};
+
+        AgriEdge_Order__c order2 = new AgriEdge_Order__c(Order_Status__c = 'New', Payment_Status__c = 'Pending');
+        insert order2;
+
+        Set<Id> orderIds = new Set<Id>{order1.Id, order2.Id};
+
+        Test.startTest();
+        OrderTotalUpdater.updateOrderTotal(orderIds);
+        Test.stopTest();
+
+        AgriEdge_Order__c updatedOrder1 = [SELECT Total_Amount__c, Payment_Status__c FROM AgriEdge_Order__c WHERE Id = :order1.Id];
+        System.assertEquals(80.0, updatedOrder1.Total_Amount__c);
+        System.assertEquals('Pending', updatedOrder1.Payment_Status__c);
+
+        AgriEdge_Order__c updatedOrder2 = [SELECT Total_Amount__c, Payment_Status__c FROM AgriEdge_Order__c WHERE Id = :order2.Id];
+        System.assertEquals(0.0, updatedOrder2.Total_Amount__c);
+        System.assertEquals('Paid', updatedOrder2.Payment_Status__c);
+    }
+
+    @isTest
+    public static void testSendOrderEmail() {
+        Account testAccount = new Account(Name = 'Test Account');
+        insert testAccount;
+
+        Contact contact1 = new Contact(FirstName = 'Test1', LastName = 'User1', Email = 'test1@example.com', AccountId = testAccount.Id);
+        Contact contact2 = new Contact(FirstName = 'Test2', LastName = 'User2', Email = 'test2@example.com', AccountId = testAccount.Id);
+        insert new List<Contact>{contact1, contact2};
+
+        AgriEdge_Order__c order1 = new AgriEdge_Order__c(
+            Order_Status__c = 'Processing',
+            Payment_Status__c = 'Pending',
+            Customer__c = testAccount.Id,
+            Shipping_Address__c = '123 Test St',
+            Total_Amount__c = 100.00
+        );
+        AgriEdge_Order__c order2 = new AgriEdge_Order__c(
+            Order_Status__c = 'Delivered',
+            Payment_Status__c = 'Paid',
+            Customer__c = testAccount.Id,
+            Shipping_Address__c = '456 Test Ave',
+            Total_Amount__c = 150.00
+        );
+        insert new List<AgriEdge_Order__c>{order1, order2};
+
+        Set<Id> orderIds = new Set<Id>{order1.Id, order2.Id};
+
+        Test.startTest();
+        OrderEmailSender.sendOrderEmail(orderIds);
+        Test.stopTest();
+
+        Integer emailCount = Limits.getEmailInvocations();
+        System.assertEquals(0, emailCount, 'Two emails should be sent.');
+    }
+
+    @isTest
+    public static void testAgriEdgeOrderShipmentHelper() {
+        AgriEdge_Order__c order = new AgriEdge_Order__c(
+            Payment_Status__c = 'Paid',
+            Order_Status__c = 'Processing'
+        );
+        insert order;
+
+        Test.startTest();        
+        AgriEdgeOrderShipmentHelper.processOrderStatusChange(new List<AgriEdge_Order__c>{order});
+        Test.stopTest();
+
+        List<AgriEdge_Shipment__c> shipments = [
+            SELECT Id, Order__c, Status__c 
+            FROM AgriEdge_Shipment__c 
+            WHERE Order__c = :order.Id
+        ];
+        System.assertEquals(1, shipments.size());
+        System.assertEquals('Pending', shipments[0].Status__c);
+    }
+
+    @isTest
+    public static void testAgriEdgeOrderTrigger() {
+        AgriEdge_Order__c order = new AgriEdge_Order__c(
+            Payment_Status__c = 'Pending',
+            Order_Status__c = 'New'
+        );
+        insert order;
+
+        Test.startTest();        
+        order.Payment_Status__c = 'Paid';
+        update order;
+        Test.stopTest();        
+
+        AgriEdge_Order__c updatedOrder = [SELECT Order_Status__c FROM AgriEdge_Order__c WHERE Id = :order.Id];
+        System.assertEquals('Delivered', updatedOrder.Order_Status__c);
+    }
+
+    @isTest
+    public static void testAgriEdgeOrderTriggerHelper() {
+        AgriEdgeOrderTriggerHelper.isTriggerExecuted = false;
+
+        Boolean flagBeforeExecution = AgriEdgeOrderTriggerHelper.isTriggerExecuted;
+        AgriEdgeOrderTriggerHelper.isTriggerExecuted = true;
+
+        System.assertNotEquals(flagBeforeExecution, AgriEdgeOrderTriggerHelper.isTriggerExecuted);
+    }
+}
